@@ -39,10 +39,23 @@ public sealed record ArrowAnnotation(
 
 public sealed record PathAnnotation(
     Guid Id,
-    IReadOnlyList<Point> Points,
     Color StrokeColor,
     double StrokeThickness,
-    bool IsHighlighter) : AnnotationItem(Id);
+    bool IsHighlighter) : AnnotationItem(Id)
+{
+    public IReadOnlyList<Point> Points { get; init; } = [];
+
+    public PathAnnotation(
+        Guid id,
+        IReadOnlyList<Point> points,
+        Color strokeColor,
+        double strokeThickness,
+        bool isHighlighter)
+        : this(id, strokeColor, strokeThickness, isHighlighter)
+    {
+        Points = points.ToArray();
+    }
+}
 
 public sealed record TextAnnotation(
     Guid Id,
