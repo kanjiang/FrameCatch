@@ -15,6 +15,7 @@ public partial class App : System.Windows.Application
     private AppSettings _settings = new();
     private TrayIconService? _trayIconService;
     private HotkeyService? _hotkeyService;
+    private SettingsWindow? _settingsWindow;
     private Window? _messageWindow;
     private CaptureOverlayWindow? _overlayWindow;
 
@@ -42,7 +43,9 @@ public partial class App : System.Windows.Application
 
         if (!_hotkeyService.Register())
         {
-            ShowHotkeyRegistrationFailure(_hotkeyService.LastRegistrationErrorCode);
+            ShowHotkeyRegistrationFailure(
+                _hotkeyService.LastRegistrationErrorCode,
+                DescribeHotkey(_settings.HotkeyModifiers, _settings.HotkeyKey));
         }
     }
 
@@ -95,8 +98,30 @@ public partial class App : System.Windows.Application
 
     private void OpenSettings()
     {
-        System.Windows.MessageBox.Show("设置将在下一任务提供。", "截图工具",
-            MessageBoxButton.OK, MessageBoxImage.Information);
+        if (_settingsWindow is not null)
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+
+        var settingsWindow = new SettingsWindow(CloneSettings(_settings))
+        {
+            Owner = _messageWindow
+        };
+
+        _settingsWindow = settingsWindow;
+        try
+        {
+            var dialogResult = settingsWindow.ShowDialog();
+            if (dialogResult == true && settingsWindow.ResultSettings is not null)
+            {
+                ApplySettings(settingsWindow.ResultSettings);
+            }
+        }
+        finally
+        {
+            _settingsWindow = null;
+        }
     }
 
     private void ExitApplication() => Shutdown();
@@ -143,13 +168,118 @@ public partial class App : System.Windows.Application
             Top = -10000
         };
 
-    private void ShowHotkeyRegistrationFailure(int errorCode)
+    private void ApplySettings(AppSettings updatedSettings)
+    {
+        if (_hotkeyService is null)
+        {
+            return;
+        }
+
+        var previousSettings = CloneSettings(_settings);
+        var previousHotkeyModifiers = _settings.HotkeyModifiers;
+        var previousHotkeyKey = _settings.HotkeyKey;
+
+        _settings.HotkeyModifiers = updatedSettings.HotkeyModifiers;
+        _settings.HotkeyKey = updatedSettings.HotkeyKey;
+        _settings.DefaultSaveDirectory = updatedSettings.DefaultSaveDirectory;
+        _settings.StrokeColor = updatedSettings.StrokeColor;
+        _settings.StrokeThickness = updatedSettings.StrokeThickness;
+
+        try
+        {
+            _settings.Save();
+        }
+        catch (Exception ex)
+        {
+            RestoreSettings(previousSettings);
+            System.Windows.MessageBox.Show(
+                $"保存设置失败：{ex.Message}",
+                "截图工具",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return;
+        }
+
+        _hotkeyService.Unregister();
+        if (_hotkeyService.Register())
+        {
+            return;
+        }
+
+        _settings.HotkeyModifiers = previousHotkeyModifiers;
+        _settings.HotkeyKey = previousHotkeyKey;
+
+        try
+        {
+            _settings.Save();
+        }
+        catch
+        {
+            // If restoring the old hotkey cannot be saved, keep the in-memory rollback.
+        }
+
+        if (!_hotkeyService.Register())
+        {
+            ShowHotkeyRegistrationFailure(
+                _hotkeyService.LastRegistrationErrorCode,
+                DescribeHotkey(_settings.HotkeyModifiers, _settings.HotkeyKey));
+        }
+    }
+
+    private static AppSettings CloneSettings(AppSettings settings) =>
+        new()
+        {
+            HotkeyModifiers = settings.HotkeyModifiers,
+            HotkeyKey = settings.HotkeyKey,
+            DefaultSaveDirectory = settings.DefaultSaveDirectory,
+            StrokeColor = settings.StrokeColor,
+            StrokeThickness = settings.StrokeThickness
+        };
+
+    private void RestoreSettings(AppSettings settings)
+    {
+        _settings.HotkeyModifiers = settings.HotkeyModifiers;
+        _settings.HotkeyKey = settings.HotkeyKey;
+        _settings.DefaultSaveDirectory = settings.DefaultSaveDirectory;
+        _settings.StrokeColor = settings.StrokeColor;
+        _settings.StrokeThickness = settings.StrokeThickness;
+    }
+
+    private static string DescribeHotkey(uint modifiers, uint key)
+    {
+        var parts = new List<string>();
+        if ((modifiers & 0x0002) != 0)
+        {
+            parts.Add("Ctrl");
+        }
+
+        if ((modifiers & 0x0001) != 0)
+        {
+            parts.Add("Alt");
+        }
+
+        if ((modifiers & 0x0004) != 0)
+        {
+            parts.Add("Shift");
+        }
+
+        if ((modifiers & 0x0008) != 0)
+        {
+            parts.Add("Win");
+        }
+
+        var keyName = key == 0 ? "未设置" : ((System.Windows.Input.Key)System.Windows.Input.KeyInterop.KeyFromVirtualKey((int)key)).ToString();
+        parts.Add(keyName);
+        return string.Join("+", parts);
+    }
+
+    private void ShowHotkeyRegistrationFailure(int errorCode, string hotkeyDescription)
     {
         var detail = errorCode == 0
             ? "请检查是否被其他程序占用。"
             : $"错误代码：{errorCode}。请检查是否被其他程序占用。";
         System.Windows.MessageBox.Show(
-            $"默认热键 Ctrl+Shift+A 注册失败，应用将继续运行，但无法通过热键启动截图。\n{detail}",
+            $"热键 {hotkeyDescription} 注册失败，应用将继续运行，但无法通过热键启动截图。\n{detail}",
             "截图工具",
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
