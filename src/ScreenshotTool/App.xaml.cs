@@ -128,7 +128,7 @@ public partial class App : System.Windows.Application
 
     private void Overlay_CaptureConfirmed(System.Windows.Media.Imaging.BitmapSource capture)
     {
-        var editorWindow = new EditorWindow(capture);
+        var editorWindow = new EditorWindow(capture, _settings);
         editorWindow.Show();
         editorWindow.Activate();
     }

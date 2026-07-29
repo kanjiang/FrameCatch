@@ -1,10 +1,13 @@
 using System.ComponentModel;
+using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
+using ScreenshotTool.Shell;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -18,9 +21,10 @@ namespace ScreenshotTool.Editor;
 public partial class EditorWindow : Window
 {
     private readonly AnnotationCanvas _canvas;
+    private readonly string? _defaultSaveDirectory;
     private bool _hasUnexportedChanges = true;
 
-    public EditorWindow(BitmapSource image)
+    public EditorWindow(BitmapSource image, AppSettings? settings = null)
     {
         ArgumentNullException.ThrowIfNull(image);
 
@@ -30,6 +34,13 @@ public partial class EditorWindow : Window
         _canvas.StateChanged += Canvas_StateChanged;
         _canvas.ContentChanged += Canvas_ContentChanged;
         CanvasHost.Child = _canvas;
+
+        if (settings is not null)
+        {
+            ApplyInitialSettings(settings);
+        }
+
+        _defaultSaveDirectory = settings?.DefaultSaveDirectory;
 
         _canvas.CurrentTool = ToolKind.Select;
         ApplySelectedColor();
@@ -275,7 +286,66 @@ public partial class EditorWindow : Window
             OverwritePrompt = true
         };
 
+        if (!string.IsNullOrWhiteSpace(_defaultSaveDirectory) && Directory.Exists(_defaultSaveDirectory))
+        {
+            dialog.InitialDirectory = _defaultSaveDirectory;
+        }
+
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
+    private void ApplyInitialSettings(AppSettings settings)
+    {
+        var colorTag = TryParseHexColor(settings.StrokeColor, out _) ? settings.StrokeColor : "#FFE53E3E";
+        SelectOrAddComboBoxItemByTag(ColorComboBox, colorTag, $"自定义 {colorTag}");
+
+        var thicknessTag = settings.StrokeThickness > 0
+            ? settings.StrokeThickness.ToString(CultureInfo.InvariantCulture)
+            : "4";
+        SelectOrAddComboBoxItemByTag(ThicknessComboBox, thicknessTag, $"自定义 {thicknessTag} px");
+    }
+
+    private static bool TryParseHexColor(string? value, out Color color)
+    {
+        color = Colors.Red;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (ColorConverter.ConvertFromString(value) is Color parsed)
+            {
+                color = parsed;
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static void SelectOrAddComboBoxItemByTag(System.Windows.Controls.ComboBox comboBox, string tagValue, string customContent)
+    {
+        foreach (var item in comboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (item.Tag?.ToString() == tagValue)
+            {
+                comboBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        var customItem = new ComboBoxItem
+        {
+            Content = customContent,
+            Tag = tagValue
+        };
+        comboBox.Items.Insert(0, customItem);
+        comboBox.SelectedItem = customItem;
     }
 
     private void MarkExported()
