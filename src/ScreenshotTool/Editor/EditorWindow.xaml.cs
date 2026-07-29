@@ -22,7 +22,7 @@ public partial class EditorWindow : Window
 {
     private readonly AnnotationCanvas _canvas;
     private readonly string? _defaultSaveDirectory;
-    private bool _hasUnexportedChanges = true;
+    private bool _hasUnexportedChanges = false;
 
     public EditorWindow(BitmapSource image, AppSettings? settings = null)
     {
@@ -79,6 +79,16 @@ public partial class EditorWindow : Window
         }
 
         ApplySelectedThickness();
+    }
+
+    private void FontSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        ApplySelectedFontSize();
     }
 
     private void UndoButton_Click(object sender, RoutedEventArgs e)
@@ -265,6 +275,16 @@ public partial class EditorWindow : Window
             double.TryParse(tag, out var thickness))
         {
             _canvas.StrokeThickness = thickness;
+        }
+    }
+
+    private void ApplySelectedFontSize()
+    {
+        if (FontSizeComboBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string tag &&
+            double.TryParse(tag, out var fontSize))
+        {
+            _canvas.TextFontSize = fontSize;
         }
     }
 

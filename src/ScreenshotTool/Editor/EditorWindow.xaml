@@ -113,6 +113,29 @@
                                   Tag="12" />
                 </ComboBox>
 
+                <TextBlock Margin="0,0,6,8"
+                           VerticalAlignment="Center"
+                           Foreground="#FF4A5568"
+                           Text="字号" />
+                <ComboBox x:Name="FontSizeComboBox"
+                          Width="92"
+                          Margin="0,0,16,8"
+                          SelectionChanged="FontSizeComboBox_SelectionChanged">
+                    <ComboBoxItem Content="12"
+                                  Tag="12" />
+                    <ComboBoxItem Content="16"
+                                  Tag="16" />
+                    <ComboBoxItem Content="20"
+                                  Tag="20" />
+                    <ComboBoxItem Content="24"
+                                  Tag="24"
+                                  IsSelected="True" />
+                    <ComboBoxItem Content="32"
+                                  Tag="32" />
+                    <ComboBoxItem Content="48"
+                                  Tag="48" />
+                </ComboBox>
+
                 <Button x:Name="UndoButton"
                         Content="撤销"
                         Margin="0,0,8,8"
