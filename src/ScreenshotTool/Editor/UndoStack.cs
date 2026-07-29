@@ -18,27 +18,29 @@ public sealed class UndoStack
         _redoStack.Clear();
     }
 
-    public void Undo()
+    public bool Undo()
     {
         if (!CanUndo)
         {
-            return;
+            return false;
         }
 
         var command = _undoStack.Pop();
         command.Undo();
         _redoStack.Push(command);
+        return true;
     }
 
-    public void Redo()
+    public bool Redo()
     {
         if (!CanRedo)
         {
-            return;
+            return false;
         }
 
         var command = _redoStack.Pop();
         command.Do();
         _undoStack.Push(command);
+        return true;
     }
 }

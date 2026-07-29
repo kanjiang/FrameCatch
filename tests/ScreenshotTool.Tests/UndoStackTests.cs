@@ -5,6 +5,14 @@ namespace ScreenshotTool.Tests;
 public class UndoStackTests
 {
     [Fact]
+    public void Undo_WhenEmpty_ReturnsFalse()
+    {
+        var stack = new UndoStack();
+        Assert.False(stack.Undo());
+        Assert.False(stack.Redo());
+    }
+
+    [Fact]
     public void Execute_Undo_Redo_Works()
     {
         var list = new List<int>();

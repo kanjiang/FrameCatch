@@ -92,24 +92,34 @@ public sealed class AnnotationCanvas : Canvas
 
     public bool HasSelection => _selectedItem is not null;
 
-    public void Undo()
+    public bool Undo()
     {
         CommitActiveText();
         ClearTransientState();
-        _undoStack.Undo();
+        if (!_undoStack.Undo())
+        {
+            return false;
+        }
+
         SyncSelectionAfterHistory();
         RaiseContentChanged();
         InvalidateVisual();
+        return true;
     }
 
-    public void Redo()
+    public bool Redo()
     {
         CommitActiveText();
         ClearTransientState();
-        _undoStack.Redo();
+        if (!_undoStack.Redo())
+        {
+            return false;
+        }
+
         SyncSelectionAfterHistory();
         RaiseContentChanged();
         InvalidateVisual();
+        return true;
     }
 
     public bool DeleteSelection()

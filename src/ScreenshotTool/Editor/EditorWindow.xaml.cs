@@ -71,14 +71,18 @@ public partial class EditorWindow : Window
 
     private void UndoButton_Click(object sender, RoutedEventArgs e)
     {
-        _canvas.Undo();
-        SetStatus("已撤销。");
+        if (_canvas.Undo())
+        {
+            SetStatus("已撤销。");
+        }
     }
 
     private void RedoButton_Click(object sender, RoutedEventArgs e)
     {
-        _canvas.Redo();
-        SetStatus("已重做。");
+        if (_canvas.Redo())
+        {
+            SetStatus("已重做。");
+        }
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)
@@ -98,7 +102,8 @@ public partial class EditorWindow : Window
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        try
+        var image = BuildExportImage();
+        while (true)
         {
             var path = PromptSavePath();
             if (path is null)
@@ -106,36 +111,54 @@ public partial class EditorWindow : Window
                 return;
             }
 
-            var image = BuildExportImage();
-            ImageExportService.SaveToFile(image, path);
-            MarkExported();
-            SetStatus($"已保存到 {path}");
-        }
-        catch (Exception ex)
-        {
-            ShowError("保存失败", ex.Message);
+            try
+            {
+                ImageExportService.SaveToFile(image, path);
+                MarkExported();
+                SetStatus($"已保存到 {path}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                ShowError("保存失败", ex.Message);
+            }
         }
     }
 
     private void CopyAndSaveButton_Click(object sender, RoutedEventArgs e)
     {
+        BitmapSource image;
         try
+        {
+            image = BuildExportImage();
+            ImageExportService.CopyToClipboard(image);
+        }
+        catch (Exception ex)
+        {
+            ShowError("复制失败", ex.Message);
+            return;
+        }
+
+        while (true)
         {
             var path = PromptSavePath();
             if (path is null)
             {
+                SetStatus("已复制到剪贴板，保存已取消。");
                 return;
             }
 
-            var image = BuildExportImage();
-            ImageExportService.CopyToClipboard(image);
-            ImageExportService.SaveToFile(image, path);
-            MarkExported();
-            SetStatus($"已复制并保存到 {path}");
-        }
-        catch (Exception ex)
-        {
-            ShowError("导出失败", ex.Message);
+            try
+            {
+                ImageExportService.SaveToFile(image, path);
+                MarkExported();
+                SetStatus($"已复制并保存到 {path}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                ShowError("保存失败", ex.Message);
+            }
         }
     }
 
@@ -145,16 +168,22 @@ public partial class EditorWindow : Window
     {
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z)
         {
-            _canvas.Undo();
-            SetStatus("已撤销。");
+            if (_canvas.Undo())
+            {
+                SetStatus("已撤销。");
+            }
+
             e.Handled = true;
             return;
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Y)
         {
-            _canvas.Redo();
-            SetStatus("已重做。");
+            if (_canvas.Redo())
+            {
+                SetStatus("已重做。");
+            }
+
             e.Handled = true;
             return;
         }
