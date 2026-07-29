@@ -37,4 +37,12 @@ internal static class Win32
         IntPtr hdcSrc, int xSrc, int ySrc, int rop);
 
     public const int SRCCOPY = 0x00CC0020;
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
 }
