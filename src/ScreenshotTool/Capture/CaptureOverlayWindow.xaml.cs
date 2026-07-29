@@ -134,15 +134,6 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
-    private void Window_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (_state == CaptureState.PendingConfirm)
-        {
-            ConfirmSelection();
-            e.Handled = true;
-        }
-    }
-
     private void Window_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         CancelCapture();
@@ -155,7 +146,18 @@ public partial class CaptureOverlayWindow : Window
 
     private void SelectionCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_state == CaptureState.PendingConfirm || SelectionCanvas.ActualWidth <= 0 || SelectionCanvas.ActualHeight <= 0)
+        if (_state == CaptureState.PendingConfirm)
+        {
+            if (e.ClickCount == 2)
+            {
+                ConfirmSelection();
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        if (SelectionCanvas.ActualWidth <= 0 || SelectionCanvas.ActualHeight <= 0)
         {
             return;
         }

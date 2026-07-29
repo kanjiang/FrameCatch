@@ -12,7 +12,6 @@
         Focusable="True"
         WindowStartupLocation="Manual"
         KeyDown="Window_KeyDown"
-        MouseDoubleClick="Window_MouseDoubleClick"
         MouseRightButtonUp="Window_MouseRightButtonUp">
     <Grid x:Name="RootGrid" Background="Transparent">
         <Image x:Name="BackgroundImage"
