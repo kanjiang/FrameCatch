@@ -25,7 +25,9 @@ public partial class CaptureOverlayWindow : Window
     private Int32Rect _selectionBounds = Int32Rect.Empty;
     private double _scaleX = 1;
     private double _scaleY = 1;
-    private bool _completionRaised;
+    private bool _isClosing;
+    private CompletionKind _completionKind = CompletionKind.None;
+    private BitmapSource? _pendingCapture;
 
     public event Action<BitmapSource>? CaptureConfirmed;
     public event Action? CaptureCancelled;
@@ -88,13 +90,22 @@ public partial class CaptureOverlayWindow : Window
     {
         Mouse.OverrideCursor = null;
 
-        if (_completionRaised)
+        switch (_completionKind)
         {
-            return;
-        }
+            case CompletionKind.Confirmed:
+                if (_pendingCapture is not null)
+                {
+                    CaptureConfirmed?.Invoke(_pendingCapture);
+                }
 
-        _completionRaised = true;
-        CaptureCancelled?.Invoke();
+                break;
+            case CompletionKind.Cancelled:
+            case CompletionKind.None:
+                CaptureCancelled?.Invoke();
+                break;
+            default:
+                throw new InvalidOperationException($"Unexpected completion kind: {_completionKind}");
+        }
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
@@ -120,6 +131,15 @@ public partial class CaptureOverlayWindow : Window
                 CancelCapture();
                 e.Handled = true;
                 break;
+        }
+    }
+
+    private void Window_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_state == CaptureState.PendingConfirm)
+        {
+            ConfirmSelection();
+            e.Handled = true;
         }
     }
 
@@ -254,15 +274,19 @@ public partial class CaptureOverlayWindow : Window
 
     private void CancelCapture()
     {
+        if (_isClosing)
+        {
+            return;
+        }
+
         SelectionCanvas.ReleaseMouseCapture();
-        _completionRaised = true;
-        CaptureCancelled?.Invoke();
-        Close();
+        _completionKind = CompletionKind.Cancelled;
+        CloseOnce();
     }
 
     private void ConfirmSelection()
     {
-        if (_state != CaptureState.PendingConfirm)
+        if (_state != CaptureState.PendingConfirm || _isClosing)
         {
             return;
         }
@@ -287,8 +311,19 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        _completionRaised = true;
-        CaptureConfirmed?.Invoke(capture);
+        _pendingCapture = capture;
+        _completionKind = CompletionKind.Confirmed;
+        CloseOnce();
+    }
+
+    private void CloseOnce()
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        _isClosing = true;
         Close();
     }
 
@@ -507,5 +542,12 @@ public partial class CaptureOverlayWindow : Window
         Idle,
         Drawing,
         PendingConfirm
+    }
+
+    private enum CompletionKind
+    {
+        None,
+        Confirmed,
+        Cancelled
     }
 }

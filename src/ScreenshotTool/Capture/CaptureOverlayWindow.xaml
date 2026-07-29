@@ -12,6 +12,7 @@
         Focusable="True"
         WindowStartupLocation="Manual"
         KeyDown="Window_KeyDown"
+        MouseDoubleClick="Window_MouseDoubleClick"
         MouseRightButtonUp="Window_MouseRightButtonUp">
     <Grid x:Name="RootGrid" Background="Transparent">
         <Image x:Name="BackgroundImage"
@@ -85,7 +86,7 @@
                                    FontWeight="SemiBold" />
                         <TextBlock Foreground="#CCFFFFFF"
                                    FontSize="11"
-                                   Text="Enter 确认，Esc 取消" />
+                                   Text="双击或 Enter 确认，Esc 取消" />
                     </StackPanel>
                 </StackPanel>
             </Border>

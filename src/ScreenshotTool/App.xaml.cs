@@ -36,9 +36,10 @@ public partial class App : System.Windows.Application
                 "截图工具",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            Shutdown();
+            // Defer shutdown until after the overlay has fully closed.
+            Dispatcher.BeginInvoke(() => Shutdown());
         };
-        overlay.CaptureCancelled += Shutdown;
+        overlay.CaptureCancelled += () => Dispatcher.BeginInvoke(() => Shutdown());
 #endif
     }
 
