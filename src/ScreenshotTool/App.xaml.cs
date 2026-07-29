@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using ScreenshotTool.Capture;
 
 namespace ScreenshotTool;
 
@@ -24,6 +25,21 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         // 后续 Task 接入 TrayIconService；临时：先不 Show 任何窗口
+
+#if DEBUG
+        // Task 10 会用托盘/热键替换这个调试入口；当前可按 Esc 或右键取消。
+        var overlay = CaptureOverlayWindow.ShowNew();
+        overlay.CaptureConfirmed += capture =>
+        {
+            System.Windows.MessageBox.Show(
+                $"已捕获：{capture.PixelWidth} x {capture.PixelHeight}",
+                "截图工具",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            Shutdown();
+        };
+        overlay.CaptureCancelled += Shutdown;
+#endif
     }
 
     protected override void OnExit(ExitEventArgs e)
