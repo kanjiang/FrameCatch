@@ -14,6 +14,7 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
 using RadioButton = System.Windows.Controls.RadioButton;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
+using Screen = System.Windows.Forms.Screen;
 using TextBox = System.Windows.Controls.TextBox;
 
 namespace ScreenshotTool.Editor;
@@ -22,7 +23,8 @@ public partial class EditorWindow : Window
 {
     private readonly AnnotationCanvas _canvas;
     private readonly string? _defaultSaveDirectory;
-    private bool _hasUnexportedChanges = false;
+    private bool _hasUnexportedChanges;
+    private bool _syncingToolbarFromSelection;
 
     public EditorWindow(BitmapSource image, AppSettings? settings = null)
     {
@@ -45,16 +47,53 @@ public partial class EditorWindow : Window
         _canvas.CurrentTool = ToolKind.Select;
         ApplySelectedColor();
         ApplySelectedThickness();
+        ApplySelectedFontSize();
         UpdateUiState();
         UpdateTitle();
         SetStatus($"已载入 {_canvas.BaseImage.PixelWidth} x {_canvas.BaseImage.PixelHeight} 图像。");
     }
 
-    private void Canvas_StateChanged(object? sender, EventArgs e) => UpdateUiState();
+    private void Window_SourceInitialized(object? sender, EventArgs e) => FitToCurrentMonitor();
+
+    private void FitToCurrentMonitor()
+    {
+        var screen = Screen.FromPoint(System.Windows.Forms.Cursor.Position);
+        var workArea = screen.WorkingArea;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+        var scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+
+        var workWidthDip = workArea.Width / scaleX;
+        var workHeightDip = workArea.Height / scaleY;
+
+        // Keep the window on a single monitor, with a little margin for the taskbar/edges.
+        const double occupyRatio = 0.88;
+        var maxWidth = Math.Max(MinWidth, workWidthDip * occupyRatio);
+        var maxHeight = Math.Max(MinHeight, workHeightDip * occupyRatio);
+
+        // Prefer fitting the screenshot content, but never exceed one screen.
+        var imageWidthDip = _canvas.BaseImage.PixelWidth / scaleX;
+        var imageHeightDip = _canvas.BaseImage.PixelHeight / scaleY;
+        const double chromeWidth = 64;
+        const double chromeHeight = 168;
+
+        Width = Math.Clamp(imageWidthDip + chromeWidth, MinWidth, maxWidth);
+        Height = Math.Clamp(imageHeightDip + chromeHeight, MinHeight, maxHeight);
+
+        Left = (workArea.Left / scaleX) + ((workWidthDip - Width) / 2);
+        Top = (workArea.Top / scaleY) + ((workHeightDip - Height) / 2);
+    }
+
+    private void Canvas_StateChanged(object? sender, EventArgs e)
+    {
+        SyncToolbarFromSelection();
+        UpdateUiState();
+    }
 
     private void Canvas_ContentChanged(object? sender, EventArgs e)
     {
         _hasUnexportedChanges = true;
+        SyncToolbarFromSelection();
         UpdateUiState();
         UpdateTitle();
     }
@@ -63,32 +102,44 @@ public partial class EditorWindow : Window
 
     private void ColorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded)
+        if (!IsLoaded || _syncingToolbarFromSelection)
         {
             return;
         }
 
         ApplySelectedColor();
+        if (_canvas.HasSelection && _canvas.ApplyColorToSelection(_canvas.StrokeColor))
+        {
+            SetStatus("已更新选中标注的颜色。");
+        }
     }
 
     private void ThicknessComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded)
+        if (!IsLoaded || _syncingToolbarFromSelection)
         {
             return;
         }
 
         ApplySelectedThickness();
+        if (_canvas.HasSelection && _canvas.ApplyThicknessToSelection(_canvas.StrokeThickness))
+        {
+            SetStatus("已更新选中标注的线宽。");
+        }
     }
 
     private void FontSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded)
+        if (!IsLoaded || _syncingToolbarFromSelection)
         {
             return;
         }
 
         ApplySelectedFontSize();
+        if (_canvas.HasSelection && _canvas.ApplyFontSizeToSelection(_canvas.TextFontSize))
+        {
+            SetStatus("已更新选中文字的字号。");
+        }
     }
 
     private void UndoButton_Click(object sender, RoutedEventArgs e)
@@ -379,6 +430,49 @@ public partial class EditorWindow : Window
     {
         UndoButton.IsEnabled = _canvas.CanUndo;
         RedoButton.IsEnabled = _canvas.CanRedo;
+        HintTextBlock.Text = _canvas.HasSelection
+            ? "已选中标注：可改颜色/线宽/字号；拖动可移动；Delete 删除"
+            : "Ctrl+Z 撤销，Ctrl+Y 重做；选择工具下悬停可高亮标注";
+    }
+
+    private void SyncToolbarFromSelection()
+    {
+        if (!_canvas.HasSelection)
+        {
+            return;
+        }
+
+        _syncingToolbarFromSelection = true;
+        try
+        {
+            _canvas.SyncToolbarFromSelection((color, thickness, fontSize) =>
+            {
+                if (color is Color c)
+                {
+                    var tag = $"#{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+                    SelectOrAddComboBoxItemByTag(ColorComboBox, tag, $"自定义 {tag}");
+                    _canvas.StrokeColor = c;
+                }
+
+                if (thickness is double t)
+                {
+                    var tag = t.ToString(CultureInfo.InvariantCulture);
+                    SelectOrAddComboBoxItemByTag(ThicknessComboBox, tag, $"自定义 {tag} px");
+                    _canvas.StrokeThickness = t;
+                }
+
+                if (fontSize is double f)
+                {
+                    var tag = f.ToString(CultureInfo.InvariantCulture);
+                    SelectOrAddComboBoxItemByTag(FontSizeComboBox, tag, $"自定义 {tag}");
+                    _canvas.TextFontSize = f;
+                }
+            });
+        }
+        finally
+        {
+            _syncingToolbarFromSelection = false;
+        }
     }
 
     private void UpdateTitle()

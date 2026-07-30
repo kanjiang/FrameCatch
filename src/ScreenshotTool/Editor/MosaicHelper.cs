@@ -9,6 +9,10 @@ public static class MosaicHelper
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(blockSize);
+        if (bitmap.IsFrozen)
+        {
+            throw new InvalidOperationException("Cannot apply mosaic to a frozen bitmap.");
+        }
 
         var clipped = ClipRect(rect, bitmap.PixelWidth, bitmap.PixelHeight);
         if (clipped.Width <= 0 || clipped.Height <= 0)
@@ -18,7 +22,7 @@ public static class MosaicHelper
 
         const int bytesPerPixel = 4;
         var stride = clipped.Width * bytesPerPixel;
-        var pixels = new byte[clipped.Height * stride];
+        var pixels = new byte[checked(clipped.Height * stride)];
         bitmap.CopyPixels(clipped, pixels, stride, 0);
 
         for (var blockTop = 0; blockTop < clipped.Height; blockTop += blockSize)
@@ -28,10 +32,10 @@ public static class MosaicHelper
             {
                 var blockRight = Math.Min(blockLeft + blockSize, clipped.Width);
                 var blockPixelCount = 0;
-                var sumB = 0;
-                var sumG = 0;
-                var sumR = 0;
-                var sumA = 0;
+                long sumB = 0;
+                long sumG = 0;
+                long sumR = 0;
+                long sumA = 0;
 
                 for (var y = blockTop; y < blockBottom; y++)
                 {
@@ -52,13 +56,10 @@ public static class MosaicHelper
                     continue;
                 }
 
-                var color = new byte[]
-                {
-                    (byte)(sumB / blockPixelCount),
-                    (byte)(sumG / blockPixelCount),
-                    (byte)(sumR / blockPixelCount),
-                    (byte)(sumA / blockPixelCount)
-                };
+                var avgB = (byte)(sumB / blockPixelCount);
+                var avgG = (byte)(sumG / blockPixelCount);
+                var avgR = (byte)(sumR / blockPixelCount);
+                var avgA = (byte)(sumA / blockPixelCount);
 
                 for (var y = blockTop; y < blockBottom; y++)
                 {
@@ -66,10 +67,10 @@ public static class MosaicHelper
                     for (var x = blockLeft; x < blockRight; x++)
                     {
                         var offset = rowOffset + x * bytesPerPixel;
-                        pixels[offset] = color[0];
-                        pixels[offset + 1] = color[1];
-                        pixels[offset + 2] = color[2];
-                        pixels[offset + 3] = color[3];
+                        pixels[offset] = avgB;
+                        pixels[offset + 1] = avgG;
+                        pixels[offset + 2] = avgR;
+                        pixels[offset + 3] = avgA;
                     }
                 }
             }
@@ -99,6 +100,10 @@ public static class MosaicHelper
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         ArgumentNullException.ThrowIfNull(pixels);
+        if (bitmap.IsFrozen)
+        {
+            throw new InvalidOperationException("Cannot restore pixels on a frozen bitmap.");
+        }
 
         var clipped = ClipRect(rect, bitmap.PixelWidth, bitmap.PixelHeight);
         if (clipped.Width <= 0 || clipped.Height <= 0)

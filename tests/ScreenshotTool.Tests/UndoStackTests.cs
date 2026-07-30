@@ -72,6 +72,25 @@ public class UndoStackTests
         Assert.Equal(original.Bounds, restored.Bounds);
     }
 
+    [Fact]
+    public void ReplaceAnnotationCommand_UpdatesAndRestores()
+    {
+        var items = new List<AnnotationItem>
+        {
+            new TextAnnotation(Guid.NewGuid(), new System.Windows.Point(10, 10), "hi", System.Windows.Media.Colors.Red, 24)
+        };
+        var replacement = ((TextAnnotation)items[0]) with { FontSize = 32, TextColor = System.Windows.Media.Colors.Blue };
+        var stack = new UndoStack();
+        stack.Execute(new ReplaceAnnotationCommand(items, 0, replacement));
+
+        Assert.Equal(32, ((TextAnnotation)items[0]).FontSize);
+        Assert.Equal(System.Windows.Media.Colors.Blue, ((TextAnnotation)items[0]).TextColor);
+
+        stack.Undo();
+        Assert.Equal(24, ((TextAnnotation)items[0]).FontSize);
+        Assert.Equal(System.Windows.Media.Colors.Red, ((TextAnnotation)items[0]).TextColor);
+    }
+
     private sealed class DelegateCommand : IAnnotationCommand
     {
         private readonly Action _do;

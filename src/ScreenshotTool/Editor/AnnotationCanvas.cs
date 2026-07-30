@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using Cursors = System.Windows.Input.Cursors;
+using Image = System.Windows.Controls.Image;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Pen = System.Windows.Media.Pen;
@@ -21,9 +22,12 @@ public sealed class AnnotationCanvas : Canvas
 
     private readonly List<AnnotationItem> _items = [];
     private readonly UndoStack _undoStack = new();
+    private readonly Image _backgroundImage;
+    private readonly AnnotationLayer _annotationLayer;
 
     private ToolKind _currentTool;
     private AnnotationItem? _selectedItem;
+    private AnnotationItem? _hoverItem;
     private AnnotationItem? _previewItem;
     private TextBox? _activeTextBox;
     private List<Point>? _workingPoints;
@@ -37,7 +41,7 @@ public sealed class AnnotationCanvas : Canvas
     {
         ArgumentNullException.ThrowIfNull(image);
 
-        BaseImage = image as WriteableBitmap ?? new WriteableBitmap(image);
+        BaseImage = CreateMutableBitmap(image);
 
         Width = BaseImage.PixelWidth;
         Height = BaseImage.PixelHeight;
@@ -45,6 +49,41 @@ public sealed class AnnotationCanvas : Canvas
         Focusable = true;
         Background = Brushes.Transparent;
         Cursor = Cursors.Cross;
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        TextOptions.SetTextRenderingMode(this, TextRenderingMode.ClearType);
+        TextOptions.SetTextHintingMode(this, TextHintingMode.Fixed);
+
+        _backgroundImage = new Image
+        {
+            Source = BaseImage,
+            Width = BaseImage.PixelWidth,
+            Height = BaseImage.PixelHeight,
+            Stretch = Stretch.Fill,
+            IsHitTestVisible = false,
+            SnapsToDevicePixels = true
+        };
+        RenderOptions.SetBitmapScalingMode(_backgroundImage, BitmapScalingMode.NearestNeighbor);
+        SetLeft(_backgroundImage, 0);
+        SetTop(_backgroundImage, 0);
+        SetZIndex(_backgroundImage, 0);
+
+        _annotationLayer = new AnnotationLayer(this)
+        {
+            Width = BaseImage.PixelWidth,
+            Height = BaseImage.PixelHeight,
+            IsHitTestVisible = false,
+            SnapsToDevicePixels = true
+        };
+        SetLeft(_annotationLayer, 0);
+        SetTop(_annotationLayer, 0);
+        SetZIndex(_annotationLayer, 1);
+
+        Children.Add(_backgroundImage);
+        Children.Add(_annotationLayer);
+
+        Loaded += (_, _) => ApplyDpiScaling();
     }
 
     public event EventHandler? StateChanged;
@@ -54,6 +93,8 @@ public sealed class AnnotationCanvas : Canvas
     public WriteableBitmap BaseImage { get; }
 
     public IReadOnlyList<AnnotationItem> Annotations => _items;
+
+    public AnnotationItem? SelectedAnnotation => _selectedItem;
 
     public ToolKind CurrentTool
     {
@@ -68,6 +109,7 @@ public sealed class AnnotationCanvas : Canvas
             CommitActiveText();
             _currentTool = value;
             ClearTransientState();
+            _hoverItem = null;
             Cursor = value switch
             {
                 ToolKind.Select => Cursors.Arrow,
@@ -76,7 +118,7 @@ public sealed class AnnotationCanvas : Canvas
             };
 
             RaiseStateChanged();
-            InvalidateVisual();
+            InvalidateAnnotations();
         }
     }
 
@@ -102,8 +144,9 @@ public sealed class AnnotationCanvas : Canvas
         }
 
         SyncSelectionAfterHistory();
+        RefreshBackground();
         RaiseContentChanged();
-        InvalidateVisual();
+        InvalidateAnnotations();
         return true;
     }
 
@@ -117,8 +160,9 @@ public sealed class AnnotationCanvas : Canvas
         }
 
         SyncSelectionAfterHistory();
+        RefreshBackground();
         RaiseContentChanged();
-        InvalidateVisual();
+        InvalidateAnnotations();
         return true;
     }
 
@@ -135,6 +179,46 @@ public sealed class AnnotationCanvas : Canvas
     }
 
     public void CommitPendingEdits() => CommitActiveText();
+
+    public void SyncToolbarFromSelection(Action<Color?, double?, double?> apply)
+    {
+        switch (_selectedItem)
+        {
+            case RectAnnotation rect:
+                apply(rect.StrokeColor, rect.StrokeThickness, null);
+                break;
+            case EllipseAnnotation ellipse:
+                apply(ellipse.StrokeColor, ellipse.StrokeThickness, null);
+                break;
+            case ArrowAnnotation arrow:
+                apply(arrow.StrokeColor, arrow.StrokeThickness, null);
+                break;
+            case PathAnnotation path:
+                apply(path.StrokeColor, path.StrokeThickness, null);
+                break;
+            case TextAnnotation text:
+                apply(text.TextColor, null, text.FontSize);
+                break;
+            default:
+                apply(null, null, null);
+                break;
+        }
+    }
+
+    public bool ApplyColorToSelection(Color color) =>
+        TryApplyStyleToSelection(color: color, thickness: null, fontSize: null);
+
+    public bool ApplyThicknessToSelection(double thickness) =>
+        TryApplyStyleToSelection(color: null, thickness: thickness, fontSize: null);
+
+    public bool ApplyFontSizeToSelection(double fontSize) =>
+        TryApplyStyleToSelection(color: null, thickness: null, fontSize: fontSize);
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        ApplyDpiScaling(newDpi);
+    }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
@@ -177,7 +261,7 @@ public sealed class AnnotationCanvas : Canvas
                 _workingPoints = [point];
                 _previewItem = CreatePathPreview(_workingPoints);
                 CaptureMouse();
-                InvalidateVisual();
+                InvalidateAnnotations();
                 e.Handled = true;
                 return;
         }
@@ -192,41 +276,60 @@ public sealed class AnnotationCanvas : Canvas
         {
             var delta = point - _dragStartPoint;
             _previewItem = TranslateAnnotation(_moveSourceItem, delta);
-            InvalidateVisual();
+            InvalidateAnnotations();
             return;
         }
 
-        if (!_isDrawing)
+        if (_isDrawing)
         {
+            switch (CurrentTool)
+            {
+                case ToolKind.Rectangle:
+                    _previewItem = new RectAnnotation(Guid.NewGuid(), CreateRect(_dragStartPoint, point), StrokeColor, StrokeThickness);
+                    break;
+                case ToolKind.Ellipse:
+                    _previewItem = new EllipseAnnotation(Guid.NewGuid(), CreateRect(_dragStartPoint, point), StrokeColor, StrokeThickness);
+                    break;
+                case ToolKind.Arrow:
+                    _previewItem = new ArrowAnnotation(Guid.NewGuid(), _dragStartPoint, point, StrokeColor, StrokeThickness);
+                    break;
+                case ToolKind.Pen:
+                case ToolKind.Highlighter:
+                    if (_workingPoints is not null && ShouldAppendPoint(_workingPoints, point))
+                    {
+                        _workingPoints.Add(point);
+                        _previewItem = CreatePathPreview(_workingPoints);
+                    }
+
+                    break;
+                case ToolKind.Mosaic:
+                    _previewMosaicRect = ToPixelRect(CreateRect(_dragStartPoint, point));
+                    break;
+            }
+
+            InvalidateAnnotations();
             return;
         }
 
-        switch (CurrentTool)
+        if (CurrentTool == ToolKind.Select && e.LeftButton == MouseButtonState.Released)
         {
-            case ToolKind.Rectangle:
-                _previewItem = new RectAnnotation(Guid.NewGuid(), CreateRect(_dragStartPoint, point), StrokeColor, StrokeThickness);
-                break;
-            case ToolKind.Ellipse:
-                _previewItem = new EllipseAnnotation(Guid.NewGuid(), CreateRect(_dragStartPoint, point), StrokeColor, StrokeThickness);
-                break;
-            case ToolKind.Arrow:
-                _previewItem = new ArrowAnnotation(Guid.NewGuid(), _dragStartPoint, point, StrokeColor, StrokeThickness);
-                break;
-            case ToolKind.Pen:
-            case ToolKind.Highlighter:
-                if (_workingPoints is not null && ShouldAppendPoint(_workingPoints, point))
-                {
-                    _workingPoints.Add(point);
-                    _previewItem = CreatePathPreview(_workingPoints);
-                }
-
-                break;
-            case ToolKind.Mosaic:
-                _previewMosaicRect = ToPixelRect(CreateRect(_dragStartPoint, point));
-                break;
+            UpdateHover(point);
         }
+    }
 
-        InvalidateVisual();
+    protected override void OnMouseLeave(MouseEventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hoverItem is not null && !_isMovingSelection && !_isDrawing)
+        {
+            _hoverItem = null;
+            if (CurrentTool == ToolKind.Select)
+            {
+                Cursor = Cursors.Arrow;
+            }
+
+            InvalidateAnnotations();
+        }
     }
 
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
@@ -234,74 +337,117 @@ public sealed class AnnotationCanvas : Canvas
         base.OnMouseLeftButtonUp(e);
 
         var point = ClampPoint(e.GetPosition(this));
-        ReleaseMouseCapture();
 
+        // Finish the gesture BEFORE releasing capture. ReleaseMouseCapture synchronously
+        // raises LostMouseCapture, which would otherwise clear drawing state and skip commit.
         if (_isMovingSelection && _moveSourceItem is not null)
         {
             var delta = point - _dragStartPoint;
+            var source = _moveSourceItem;
             _isMovingSelection = false;
             _previewItem = null;
-
-            if (delta.Length >= MinimumDragDistance && TryGetItemIndex(_moveSourceItem, out var selectedIndex))
+            _moveSourceItem = null;
+            if (CurrentTool == ToolKind.Select)
             {
-                var movedItem = TranslateAnnotation(_moveSourceItem, delta);
+                Cursor = Cursors.Arrow;
+            }
+
+            if (delta.Length >= MinimumDragDistance && TryGetItemIndex(source, out var selectedIndex))
+            {
+                var movedItem = TranslateAnnotation(source, delta);
                 ExecuteCommand(new MoveAnnotationCommand(_items, selectedIndex, delta), movedItem);
             }
             else
             {
-                InvalidateVisual();
+                InvalidateAnnotations();
                 RaiseStateChanged();
             }
 
+            ReleaseMouseCapture();
+            UpdateHover(point);
+            e.Handled = true;
+            return;
+        }
+
+        if (_isDrawing)
+        {
+            _isDrawing = false;
+
+            switch (CurrentTool)
+            {
+                case ToolKind.Rectangle:
+                    CommitShape(point, rect => new RectAnnotation(Guid.NewGuid(), rect, StrokeColor, StrokeThickness));
+                    break;
+                case ToolKind.Ellipse:
+                    CommitShape(point, rect => new EllipseAnnotation(Guid.NewGuid(), rect, StrokeColor, StrokeThickness));
+                    break;
+                case ToolKind.Arrow:
+                    if ((point - _dragStartPoint).Length >= MinimumDragDistance)
+                    {
+                        var annotation = new ArrowAnnotation(Guid.NewGuid(), _dragStartPoint, point, StrokeColor, StrokeThickness);
+                        ExecuteCommand(new AddAnnotationCommand(_items, annotation), annotation);
+                    }
+                    else
+                    {
+                        ClearTransientState();
+                        RaiseStateChanged();
+                        InvalidateAnnotations();
+                    }
+
+                    break;
+                case ToolKind.Pen:
+                case ToolKind.Highlighter:
+                    CommitPath();
+                    break;
+                case ToolKind.Mosaic:
+                    // Recompute from the release point so we don't rely solely on last MouseMove.
+                    _previewMosaicRect = ToPixelRect(CreateRect(_dragStartPoint, point));
+                    CommitMosaic();
+                    break;
+            }
+
+            ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
+
+        ReleaseMouseCapture();
+    }
+
+    protected override void OnLostMouseCapture(MouseEventArgs e)
+    {
+        base.OnLostMouseCapture(e);
+
+        // Only runs for interrupted capture (focus loss, etc.). Normal mouse-up finishes above first.
+        if (_isMovingSelection)
+        {
+            _isMovingSelection = false;
+            _previewItem = null;
             _moveSourceItem = null;
+            if (CurrentTool == ToolKind.Select)
+            {
+                Cursor = Cursors.Arrow;
+            }
+
+            InvalidateAnnotations();
+            RaiseStateChanged();
             return;
         }
 
-        if (!_isDrawing)
+        if (_isDrawing)
         {
-            return;
-        }
-
-        _isDrawing = false;
-
-        switch (CurrentTool)
-        {
-            case ToolKind.Rectangle:
-                CommitShape(point, rect => new RectAnnotation(Guid.NewGuid(), rect, StrokeColor, StrokeThickness));
-                break;
-            case ToolKind.Ellipse:
-                CommitShape(point, rect => new EllipseAnnotation(Guid.NewGuid(), rect, StrokeColor, StrokeThickness));
-                break;
-            case ToolKind.Arrow:
-                if ((point - _dragStartPoint).Length >= MinimumDragDistance)
-                {
-                    var annotation = new ArrowAnnotation(Guid.NewGuid(), _dragStartPoint, point, StrokeColor, StrokeThickness);
-                    ExecuteCommand(new AddAnnotationCommand(_items, annotation), annotation);
-                }
-                else
-                {
-                    ClearTransientState();
-                    RaiseStateChanged();
-                    InvalidateVisual();
-                }
-
-                break;
-            case ToolKind.Pen:
-            case ToolKind.Highlighter:
-                CommitPath();
-                break;
-            case ToolKind.Mosaic:
-                CommitMosaic();
-                break;
+            ClearTransientState();
+            InvalidateAnnotations();
+            RaiseStateChanged();
         }
     }
 
-    protected override void OnRender(DrawingContext dc)
+    private void RenderAnnotations(DrawingContext dc)
     {
-        base.OnRender(dc);
-
-        dc.DrawImage(BaseImage, new Rect(0, 0, BaseImage.PixelWidth, BaseImage.PixelHeight));
-        ImageExportService.DrawAnnotations(dc, _items);
+        var excludeId = _isMovingSelection && _moveSourceItem is not null
+            ? _moveSourceItem.Id
+            : (Guid?)null;
+        ImageExportService.DrawAnnotations(dc, _items, excludeId);
 
         if (_previewItem is not null)
         {
@@ -317,9 +463,28 @@ public sealed class AnnotationCanvas : Canvas
                 previewRect);
         }
 
-        if (_selectedItem is not null && _previewItem is null && _activeTextBox is null)
+        if (_hoverItem is not null &&
+            !_isMovingSelection &&
+            _activeTextBox is null &&
+            (_selectedItem is null || _hoverItem.Id != _selectedItem.Id))
         {
-            var bounds = ImageExportService.GetBounds(_selectedItem);
+            var hoverBounds = ImageExportService.GetBounds(_hoverItem);
+            hoverBounds.Inflate(3, 3);
+            dc.DrawRectangle(
+                new SolidColorBrush(Color.FromArgb(28, 255, 165, 0)),
+                new Pen(new SolidColorBrush(Color.FromArgb(180, 255, 140, 0)), 1) { DashStyle = DashStyles.Dot },
+                hoverBounds);
+        }
+
+        var selectionItem = _isMovingSelection && _previewItem is not null
+            ? _previewItem
+            : _selectedItem is not null && _previewItem is null && _activeTextBox is null
+                ? _selectedItem
+                : null;
+
+        if (selectionItem is not null)
+        {
+            var bounds = ImageExportService.GetBounds(selectionItem);
             bounds.Inflate(4, 4);
             dc.DrawRectangle(
                 null,
@@ -336,20 +501,100 @@ public sealed class AnnotationCanvas : Canvas
         {
             _selectedItem = item;
             _moveSourceItem = item;
+            _hoverItem = item;
             _dragStartPoint = point;
             _isMovingSelection = true;
             CaptureMouse();
+            Cursor = Cursors.SizeAll;
         }
         else
         {
             _selectedItem = null;
             _moveSourceItem = null;
             _previewItem = null;
+            _hoverItem = null;
+            Cursor = Cursors.Arrow;
         }
 
         RaiseStateChanged();
-        InvalidateVisual();
+        InvalidateAnnotations();
     }
+
+    private void UpdateHover(Point point)
+    {
+        AnnotationItem? hover = null;
+        if (TryHitTest(point, out var item))
+        {
+            hover = item;
+        }
+
+        if (ReferenceEquals(hover, _hoverItem) ||
+            (hover is not null && _hoverItem is not null && hover.Id == _hoverItem.Id))
+        {
+            if (hover is not null)
+            {
+                Cursor = Cursors.SizeAll;
+            }
+            else if (CurrentTool == ToolKind.Select)
+            {
+                Cursor = Cursors.Arrow;
+            }
+
+            return;
+        }
+
+        _hoverItem = hover;
+        Cursor = hover is not null ? Cursors.SizeAll : Cursors.Arrow;
+        InvalidateAnnotations();
+    }
+
+    private bool TryApplyStyleToSelection(Color? color, double? thickness, double? fontSize)
+    {
+        if (_selectedItem is null || !TryGetItemIndex(_selectedItem, out var index))
+        {
+            return false;
+        }
+
+        var updated = ApplyStyle(_selectedItem, color, thickness, fontSize);
+        if (Equals(updated, _selectedItem))
+        {
+            return false;
+        }
+
+        ExecuteCommand(new ReplaceAnnotationCommand(_items, index, updated), updated);
+        return true;
+    }
+
+    private static AnnotationItem ApplyStyle(AnnotationItem item, Color? color, double? thickness, double? fontSize) =>
+        item switch
+        {
+            RectAnnotation rect => rect with
+            {
+                StrokeColor = color ?? rect.StrokeColor,
+                StrokeThickness = thickness ?? rect.StrokeThickness
+            },
+            EllipseAnnotation ellipse => ellipse with
+            {
+                StrokeColor = color ?? ellipse.StrokeColor,
+                StrokeThickness = thickness ?? ellipse.StrokeThickness
+            },
+            ArrowAnnotation arrow => arrow with
+            {
+                StrokeColor = color ?? arrow.StrokeColor,
+                StrokeThickness = thickness ?? arrow.StrokeThickness
+            },
+            PathAnnotation path => path with
+            {
+                StrokeColor = color ?? path.StrokeColor,
+                StrokeThickness = thickness ?? path.StrokeThickness
+            },
+            TextAnnotation text => text with
+            {
+                TextColor = color ?? text.TextColor,
+                FontSize = fontSize ?? text.FontSize
+            },
+            _ => item
+        };
 
     private void BeginTextEdit(Point point)
     {
@@ -372,6 +617,7 @@ public sealed class AnnotationCanvas : Canvas
 
         SetLeft(textBox, point.X);
         SetTop(textBox, point.Y);
+        SetZIndex(textBox, 2);
         Children.Add(textBox);
         _activeTextBox = textBox;
         textBox.Focus();
@@ -411,7 +657,7 @@ public sealed class AnnotationCanvas : Canvas
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            InvalidateVisual();
+            InvalidateAnnotations();
             RaiseStateChanged();
             return;
         }
@@ -442,7 +688,7 @@ public sealed class AnnotationCanvas : Canvas
         if (rect.Width < MinimumDragDistance || rect.Height < MinimumDragDistance)
         {
             RaiseStateChanged();
-            InvalidateVisual();
+            InvalidateAnnotations();
             return;
         }
 
@@ -458,7 +704,7 @@ public sealed class AnnotationCanvas : Canvas
         if (points.Length == 0)
         {
             RaiseStateChanged();
-            InvalidateVisual();
+            InvalidateAnnotations();
             return;
         }
 
@@ -480,11 +726,12 @@ public sealed class AnnotationCanvas : Canvas
         if (rect is not { Width: > 0, Height: > 0 } mosaicRect)
         {
             RaiseStateChanged();
-            InvalidateVisual();
+            InvalidateAnnotations();
             return;
         }
 
-        var blockSize = Math.Max(6, (int)Math.Round(StrokeThickness * 2));
+        // Prefer a visibly blocky mosaic; thickness only nudges block size slightly.
+        var blockSize = Math.Clamp((int)Math.Round(StrokeThickness * 3), 8, 48);
         ExecuteCommand(new MosaicCommand(BaseImage, mosaicRect, blockSize), selectedItem: null);
     }
 
@@ -495,8 +742,13 @@ public sealed class AnnotationCanvas : Canvas
         _moveSourceItem = null;
         _previewItem = null;
         _previewMosaicRect = null;
+        if (command is MosaicCommand)
+        {
+            RefreshBackground();
+        }
+
         RaiseContentChanged();
-        InvalidateVisual();
+        InvalidateAnnotations();
     }
 
     private void SyncSelectionAfterHistory()
@@ -603,8 +855,7 @@ public sealed class AnnotationCanvas : Canvas
 
     private Int32Rect ToPixelRect(Rect rect)
     {
-        var normalized = rect;
-        normalized = Rect.Intersect(normalized, new Rect(0, 0, BaseImage.PixelWidth, BaseImage.PixelHeight));
+        var normalized = Rect.Intersect(rect, new Rect(0, 0, BaseImage.PixelWidth, BaseImage.PixelHeight));
         if (normalized.IsEmpty)
         {
             return Int32Rect.Empty;
@@ -622,11 +873,71 @@ public sealed class AnnotationCanvas : Canvas
             Math.Clamp(point.X, 0, BaseImage.PixelWidth),
             Math.Clamp(point.Y, 0, BaseImage.PixelHeight));
 
+    private void InvalidateAnnotations() => _annotationLayer.InvalidateVisual();
+
+    private void RefreshBackground()
+    {
+        // Image often keeps a cached frame of WriteableBitmap; reassign Source to force redraw.
+        var source = BaseImage;
+        _backgroundImage.Source = null;
+        _backgroundImage.Source = source;
+    }
+
+    private static WriteableBitmap CreateMutableBitmap(BitmapSource image)
+    {
+        // Always copy into a fresh Bgra32 buffer. Capture freezes sources, and Image
+        // must bind to a bitmap we can WritePixels into for mosaic.
+        var converted = image.Format == PixelFormats.Bgra32
+            ? image
+            : new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+
+        var width = converted.PixelWidth;
+        var height = converted.PixelHeight;
+        var dpiX = converted.DpiX > 0 ? converted.DpiX : 96;
+        var dpiY = converted.DpiY > 0 ? converted.DpiY : 96;
+        var writable = new WriteableBitmap(width, height, dpiX, dpiY, PixelFormats.Bgra32, null);
+        var stride = width * 4;
+        var pixels = new byte[checked(height * stride)];
+        converted.CopyPixels(pixels, stride, 0);
+        writable.WritePixels(new Int32Rect(0, 0, width, height), pixels, stride, 0);
+        return writable;
+    }
+
+    private void ApplyDpiScaling() => ApplyDpiScaling(VisualTreeHelper.GetDpi(this));
+
+    private void ApplyDpiScaling(DpiScale dpi)
+    {
+        var scaleX = dpi.DpiScaleX > 0 ? 1.0 / dpi.DpiScaleX : 1.0;
+        var scaleY = dpi.DpiScaleY > 0 ? 1.0 / dpi.DpiScaleY : 1.0;
+        LayoutTransform = new ScaleTransform(scaleX, scaleY);
+    }
+
     private void RaiseStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
 
     private void RaiseContentChanged()
     {
         StateChanged?.Invoke(this, EventArgs.Empty);
         ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Transparent overlay that redraws annotations without re-blitting the screenshot bitmap.
+    /// </summary>
+    private sealed class AnnotationLayer : FrameworkElement
+    {
+        private readonly AnnotationCanvas _owner;
+
+        public AnnotationLayer(AnnotationCanvas owner)
+        {
+            _owner = owner;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+            TextOptions.SetTextRenderingMode(this, TextRenderingMode.ClearType);
+        }
+
+        protected override void OnRender(DrawingContext drawingContext)
+        {
+            base.OnRender(drawingContext);
+            _owner.RenderAnnotations(drawingContext);
+        }
     }
 }

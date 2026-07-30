@@ -26,6 +26,24 @@ public class MosaicCommandTests
         Assert.Equal(before, GetPixel(bmp, 16, 16));
     }
 
+    [Fact]
+    public void Mosaic_WorksAfterCloningFrozenCaptureBitmap()
+    {
+        var frozen = CreateSolid(32, 32, Colors.Red);
+        SetPixel(frozen, 16, 16, Colors.Blue);
+        frozen.Freeze();
+
+        var mutable = new WriteableBitmap(frozen);
+        var before = GetPixel(mutable, 16, 16);
+
+        var cmd = new MosaicCommand(mutable, new Int32Rect(8, 8, 16, 16), blockSize: 8);
+        cmd.Do();
+
+        Assert.NotEqual(before, GetPixel(mutable, 16, 16));
+        cmd.Undo();
+        Assert.Equal(before, GetPixel(mutable, 16, 16));
+    }
+
     private static WriteableBitmap CreateSolid(int width, int height, Color color)
     {
         var bmp = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);

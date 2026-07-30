@@ -10,6 +10,7 @@ using Color = System.Windows.Media.Color;
 using DataFormats = System.Windows.DataFormats;
 using DataObject = System.Windows.DataObject;
 using FlowDirection = System.Windows.FlowDirection;
+using FontFamily = System.Windows.Media.FontFamily;
 using Pen = System.Windows.Media.Pen;
 using Point = System.Windows.Point;
 using Rect = System.Windows.Rect;
@@ -100,10 +101,18 @@ public static class ImageExportService
         encoder.Save(stream);
     }
 
-    internal static void DrawAnnotations(DrawingContext drawingContext, IEnumerable<AnnotationItem> items)
+    internal static void DrawAnnotations(
+        DrawingContext drawingContext,
+        IEnumerable<AnnotationItem> items,
+        Guid? excludeId = null)
     {
         foreach (var item in items)
         {
+            if (excludeId is Guid id && item.Id == id)
+            {
+                continue;
+            }
+
             DrawAnnotation(drawingContext, item);
         }
     }
@@ -238,16 +247,7 @@ public static class ImageExportService
 
     private static void DrawText(DrawingContext drawingContext, TextAnnotation text)
     {
-        var formattedText = new FormattedText(
-            text.Text,
-            CultureInfo.CurrentUICulture,
-            FlowDirection.LeftToRight,
-            new Typeface("Microsoft YaHei UI"),
-            Math.Max(12, text.FontSize),
-            new SolidColorBrush(text.TextColor),
-            1.0);
-
-        drawingContext.DrawText(formattedText, text.Position);
+        drawingContext.DrawText(CreateFormattedText(text), text.Position);
     }
 
     private static Geometry CreateArrowGeometry(ArrowAnnotation arrow)
@@ -296,16 +296,32 @@ public static class ImageExportService
 
     private static Rect GetTextBounds(TextAnnotation text)
     {
-        var formattedText = new FormattedText(
+        var formattedText = CreateFormattedText(text);
+        return new Rect(text.Position, new Size(formattedText.WidthIncludingTrailingWhitespace, formattedText.Height));
+    }
+
+    private static FormattedText CreateFormattedText(TextAnnotation text)
+    {
+        var brush = new SolidColorBrush(text.TextColor);
+        if (brush.CanFreeze)
+        {
+            brush.Freeze();
+        }
+
+        // Pixel-space annotations use pixelsPerDip=1; on-screen DPI is handled by
+        // AnnotationCanvas.LayoutTransform so glyphs stay sharp relative to the bitmap.
+        return new FormattedText(
             text.Text,
             CultureInfo.CurrentUICulture,
             FlowDirection.LeftToRight,
-            new Typeface("Microsoft YaHei UI"),
+            new Typeface(
+                new FontFamily("Microsoft YaHei UI"),
+                FontStyles.Normal,
+                FontWeights.SemiBold,
+                FontStretches.Normal),
             Math.Max(12, text.FontSize),
-            new SolidColorBrush(text.TextColor),
+            brush,
             1.0);
-
-        return new Rect(text.Position, new Size(formattedText.WidthIncludingTrailingWhitespace, formattedText.Height));
     }
 
     private static Vector Rotate(Vector vector, double radians)

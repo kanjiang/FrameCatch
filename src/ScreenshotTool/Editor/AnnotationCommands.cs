@@ -101,6 +101,30 @@ public sealed class MoveAnnotationCommand : IAnnotationCommand
         new(rect.X + delta.X, rect.Y + delta.Y, rect.Width, rect.Height);
 }
 
+public sealed class ReplaceAnnotationCommand : IAnnotationCommand
+{
+    private readonly IList<AnnotationItem> _items;
+    private readonly int _index;
+    private readonly AnnotationItem _original;
+    private readonly AnnotationItem _replacement;
+
+    public ReplaceAnnotationCommand(IList<AnnotationItem> items, int index, AnnotationItem replacement)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, items.Count);
+        ArgumentNullException.ThrowIfNull(replacement);
+
+        _items = items;
+        _index = index;
+        _original = items[index];
+        _replacement = replacement;
+    }
+
+    public void Do() => _items[_index] = _replacement;
+
+    public void Undo() => _items[_index] = _original;
+}
+
 public sealed class MosaicCommand : IAnnotationCommand
 {
     private readonly WriteableBitmap _bitmap;

@@ -38,6 +38,36 @@ public class ImageExportServiceTests
         Assert.Equal(Colors.White, centerPixel);
     }
 
+    [Fact]
+    public void Compose_WithExcludeId_SkipsMatchingAnnotation()
+    {
+        var baseImage = CreateSolidBitmap(30, 30, Colors.White);
+        var keptId = Guid.NewGuid();
+        var skippedId = Guid.NewGuid();
+        var annotations = new AnnotationItem[]
+        {
+            new RectAnnotation(keptId, new Rect(6, 6, 18, 18), Colors.Red, 4),
+            new RectAnnotation(skippedId, new Rect(2, 2, 4, 4), Colors.Blue, 4)
+        };
+
+        // Compose has no exclude overload; verify DrawAnnotations exclude via visual render.
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+        {
+            dc.DrawImage(baseImage, new Rect(0, 0, 30, 30));
+            ImageExportService.DrawAnnotations(dc, annotations, excludeId: skippedId);
+        }
+
+        var bitmap = new RenderTargetBitmap(30, 30, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+
+        var redEdge = SampleColor(bitmap, 15, 6);
+        var blueCorner = SampleColor(bitmap, 3, 3);
+
+        Assert.True(redEdge.R > 200, "kept red annotation should still draw");
+        Assert.Equal(Colors.White, blueCorner);
+    }
+
     private static WriteableBitmap CreateSolidBitmap(int width, int height, Color color)
     {
         var bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
