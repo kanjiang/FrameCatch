@@ -49,7 +49,7 @@ dotnet run --project src/ScreenshotTool/ScreenshotTool.csproj
 
 ### 标注编辑器
 
-工具栏提供：选择、矩形、椭圆、箭头、画笔、荧光笔、马赛克、文字。可调颜色与线宽。
+工具栏提供：选择、矩形、椭圆、箭头、画笔、荧光笔、文字。可调颜色与线宽。
 
 - **Ctrl+Z** / **Ctrl+Y**：撤销 / 重做
 - **Delete**：删除选中的矢量标注
@@ -60,7 +60,7 @@ dotnet run --project src/ScreenshotTool/ScreenshotTool.csproj
 | 类别 | 功能 |
 |------|------|
 | 截图 | 多显示器虚拟桌面截屏；矩形框选；自由套索（透明边缘） |
-| 标注 | 矩形、椭圆、箭头、画笔、荧光笔、马赛克、文字 |
+| 标注 | 矩形、椭圆、箭头、画笔、荧光笔、文字 |
 | 编辑 | 撤销/重做；矢量标注选择与删除 |
 | 导出 | 复制到剪贴板、保存 PNG、复制并保存 |
 | 系统集成 | 托盘常驻、全局热键、单实例、Per-Monitor DPI Aware |

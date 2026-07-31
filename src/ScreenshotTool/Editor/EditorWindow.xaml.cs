@@ -16,6 +16,7 @@ using RadioButton = System.Windows.Controls.RadioButton;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using Screen = System.Windows.Forms.Screen;
 using TextBox = System.Windows.Controls.TextBox;
+using Point = System.Windows.Point;
 
 namespace ScreenshotTool.Editor;
 
@@ -53,35 +54,73 @@ public partial class EditorWindow : Window
         SetStatus($"已载入 {_canvas.BaseImage.PixelWidth} x {_canvas.BaseImage.PixelHeight} 图像。");
     }
 
-    private void Window_SourceInitialized(object? sender, EventArgs e) => FitToCurrentMonitor();
+    private void Window_SourceInitialized(object? sender, EventArgs e) => FitToImageAndMonitor();
 
-    private void FitToCurrentMonitor()
+    private void Window_Loaded(object sender, RoutedEventArgs e) => FitToImageAndMonitor();
+
+    private void FitToImageAndMonitor()
     {
         var screen = Screen.FromPoint(System.Windows.Forms.Cursor.Position);
-        var workArea = screen.WorkingArea;
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
-        var scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+        var pixelWork = screen.WorkingArea;
 
-        var workWidthDip = workArea.Width / scaleX;
-        var workHeightDip = workArea.Height / scaleY;
+        // Convert the WinForms pixel work area into WPF DIPs for THIS window.
+        Point topLeftDip;
+        Point bottomRightDip;
+        var source = PresentationSource.FromVisual(this);
+        if (source?.CompositionTarget is { } target)
+        {
+            var fromDevice = target.TransformFromDevice;
+            topLeftDip = fromDevice.Transform(new Point(pixelWork.Left, pixelWork.Top));
+            bottomRightDip = fromDevice.Transform(new Point(pixelWork.Right, pixelWork.Bottom));
+        }
+        else
+        {
+            var dpi = VisualTreeHelper.GetDpi(this);
+            var sx = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+            var sy = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+            topLeftDip = new Point(pixelWork.Left / sx, pixelWork.Top / sy);
+            bottomRightDip = new Point(pixelWork.Right / sx, pixelWork.Bottom / sy);
+        }
 
-        // Keep the window on a single monitor, with a little margin for the taskbar/edges.
-        const double occupyRatio = 0.88;
-        var maxWidth = Math.Max(MinWidth, workWidthDip * occupyRatio);
-        var maxHeight = Math.Max(MinHeight, workHeightDip * occupyRatio);
+        var workWidth = Math.Max(MinWidth, bottomRightDip.X - topLeftDip.X);
+        var workHeight = Math.Max(MinHeight, bottomRightDip.Y - topLeftDip.Y);
 
-        // Prefer fitting the screenshot content, but never exceed one screen.
-        var imageWidthDip = _canvas.BaseImage.PixelWidth / scaleX;
-        var imageHeightDip = _canvas.BaseImage.PixelHeight / scaleY;
-        const double chromeWidth = 64;
-        const double chromeHeight = 168;
+        // Stay fully on the current monitor with a small outer margin.
+        const double screenMargin = 24;
+        var maxWidth = Math.Max(MinWidth, workWidth - (screenMargin * 2));
+        var maxHeight = Math.Max(MinHeight, workHeight - (screenMargin * 2));
+        MaxWidth = maxWidth;
+        MaxHeight = maxHeight;
 
-        Width = Math.Clamp(imageWidthDip + chromeWidth, MinWidth, maxWidth);
-        Height = Math.Clamp(imageHeightDip + chromeHeight, MinHeight, maxHeight);
+        var imageWidth = _canvas.BaseImage.PixelWidth;
+        var imageHeight = _canvas.BaseImage.PixelHeight;
 
-        Left = (workArea.Left / scaleX) + ((workWidthDip - Width) / 2);
-        Top = (workArea.Top / scaleY) + ((workHeightDip - Height) / 2);
+        var scrollPadding = CanvasScrollViewer.Padding;
+        var contentPadX = scrollPadding.Left + scrollPadding.Right
+            + CanvasHost.BorderThickness.Left + CanvasHost.BorderThickness.Right;
+        var contentPadY = scrollPadding.Top + scrollPadding.Bottom
+            + CanvasHost.BorderThickness.Top + CanvasHost.BorderThickness.Bottom;
+
+        // Window frame / resize border estimate in DIPs.
+        const double frameWidth = 16;
+        const double frameHeight = 39;
+
+        // Pass 1: width hugs the image (plus thin padding). Toolbar stays single-row and scrolls if needed.
+        Width = Math.Clamp(imageWidth + contentPadX + frameWidth, MinWidth, maxWidth);
+        UpdateLayout();
+
+        var toolbarHeight = ToolbarBorder.ActualHeight > 1 ? ToolbarBorder.ActualHeight : 52;
+        var footerHeight = FooterBorder.ActualHeight > 1 ? FooterBorder.ActualHeight : 52;
+
+        // Pass 2: height = image + measured chrome only.
+        Height = Math.Clamp(
+            imageHeight + contentPadY + toolbarHeight + footerHeight + frameHeight,
+            MinHeight,
+            maxHeight);
+        UpdateLayout();
+
+        Left = topLeftDip.X + ((workWidth - Width) / 2);
+        Top = topLeftDip.Y + ((workHeight - Height) / 2);
     }
 
     private void Canvas_StateChanged(object? sender, EventArgs e)

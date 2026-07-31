@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Media.Imaging;
 using Point = System.Windows.Point;
 
 namespace ScreenshotTool.Editor;
@@ -123,36 +122,4 @@ public sealed class ReplaceAnnotationCommand : IAnnotationCommand
     public void Do() => _items[_index] = _replacement;
 
     public void Undo() => _items[_index] = _original;
-}
-
-public sealed class MosaicCommand : IAnnotationCommand
-{
-    private readonly WriteableBitmap _bitmap;
-    private readonly Int32Rect _rect;
-    private readonly int _blockSize;
-    private byte[]? _backup;
-
-    public MosaicCommand(WriteableBitmap bitmap, Int32Rect rect, int blockSize = 8)
-    {
-        ArgumentNullException.ThrowIfNull(bitmap);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(blockSize);
-
-        _bitmap = bitmap;
-        _rect = rect;
-        _blockSize = blockSize;
-    }
-
-    public void Do()
-    {
-        _backup ??= MosaicHelper.CapturePixels(_bitmap, _rect);
-        MosaicHelper.ApplyMosaic(_bitmap, _rect, _blockSize);
-    }
-
-    public void Undo()
-    {
-        if (_backup is { Length: > 0 })
-        {
-            MosaicHelper.RestorePixels(_bitmap, _rect, _backup);
-        }
-    }
 }

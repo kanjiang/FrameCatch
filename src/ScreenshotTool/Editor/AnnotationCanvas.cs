@@ -33,7 +33,6 @@ public sealed class AnnotationCanvas : Canvas
     private List<Point>? _workingPoints;
     private Point _dragStartPoint;
     private AnnotationItem? _moveSourceItem;
-    private Int32Rect? _previewMosaicRect;
     private bool _isDrawing;
     private bool _isMovingSelection;
 
@@ -82,8 +81,6 @@ public sealed class AnnotationCanvas : Canvas
 
         Children.Add(_backgroundImage);
         Children.Add(_annotationLayer);
-
-        Loaded += (_, _) => ApplyDpiScaling();
     }
 
     public event EventHandler? StateChanged;
@@ -144,7 +141,6 @@ public sealed class AnnotationCanvas : Canvas
         }
 
         SyncSelectionAfterHistory();
-        RefreshBackground();
         RaiseContentChanged();
         InvalidateAnnotations();
         return true;
@@ -160,7 +156,6 @@ public sealed class AnnotationCanvas : Canvas
         }
 
         SyncSelectionAfterHistory();
-        RefreshBackground();
         RaiseContentChanged();
         InvalidateAnnotations();
         return true;
@@ -214,12 +209,6 @@ public sealed class AnnotationCanvas : Canvas
     public bool ApplyFontSizeToSelection(double fontSize) =>
         TryApplyStyleToSelection(color: null, thickness: null, fontSize: fontSize);
 
-    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-    {
-        base.OnDpiChanged(oldDpi, newDpi);
-        ApplyDpiScaling(newDpi);
-    }
-
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
@@ -247,7 +236,6 @@ public sealed class AnnotationCanvas : Canvas
             case ToolKind.Rectangle:
             case ToolKind.Ellipse:
             case ToolKind.Arrow:
-            case ToolKind.Mosaic:
                 _dragStartPoint = point;
                 _isDrawing = true;
                 CaptureMouse();
@@ -264,6 +252,9 @@ public sealed class AnnotationCanvas : Canvas
                 InvalidateAnnotations();
                 e.Handled = true;
                 return;
+
+            default:
+                throw new InvalidOperationException($"Unsupported tool: {CurrentTool}");
         }
     }
 
@@ -302,9 +293,11 @@ public sealed class AnnotationCanvas : Canvas
                     }
 
                     break;
-                case ToolKind.Mosaic:
-                    _previewMosaicRect = ToPixelRect(CreateRect(_dragStartPoint, point));
+                case ToolKind.Select:
+                case ToolKind.Text:
                     break;
+                default:
+                    throw new InvalidOperationException($"Unsupported drawing tool: {CurrentTool}");
             }
 
             InvalidateAnnotations();
@@ -399,11 +392,14 @@ public sealed class AnnotationCanvas : Canvas
                 case ToolKind.Highlighter:
                     CommitPath();
                     break;
-                case ToolKind.Mosaic:
-                    // Recompute from the release point so we don't rely solely on last MouseMove.
-                    _previewMosaicRect = ToPixelRect(CreateRect(_dragStartPoint, point));
-                    CommitMosaic();
+                case ToolKind.Select:
+                case ToolKind.Text:
+                    ClearTransientState();
+                    RaiseStateChanged();
+                    InvalidateAnnotations();
                     break;
+                default:
+                    throw new InvalidOperationException($"Unsupported drawing tool: {CurrentTool}");
             }
 
             ReleaseMouseCapture();
@@ -452,15 +448,6 @@ public sealed class AnnotationCanvas : Canvas
         if (_previewItem is not null)
         {
             ImageExportService.DrawAnnotation(dc, _previewItem);
-        }
-
-        if (_previewMosaicRect is { Width: > 0, Height: > 0 } mosaicRect)
-        {
-            var previewRect = new Rect(mosaicRect.X, mosaicRect.Y, mosaicRect.Width, mosaicRect.Height);
-            dc.DrawRectangle(
-                new SolidColorBrush(Color.FromArgb(80, 0, 122, 204)),
-                new Pen(Brushes.White, 1) { DashStyle = DashStyles.Dash },
-                previewRect);
         }
 
         if (_hoverItem is not null &&
@@ -718,35 +705,12 @@ public sealed class AnnotationCanvas : Canvas
         ExecuteCommand(new AddAnnotationCommand(_items, annotation), annotation);
     }
 
-    private void CommitMosaic()
-    {
-        var rect = _previewMosaicRect;
-        ClearTransientState();
-
-        if (rect is not { Width: > 0, Height: > 0 } mosaicRect)
-        {
-            RaiseStateChanged();
-            InvalidateAnnotations();
-            return;
-        }
-
-        // Prefer a visibly blocky mosaic; thickness only nudges block size slightly.
-        var blockSize = Math.Clamp((int)Math.Round(StrokeThickness * 3), 8, 48);
-        ExecuteCommand(new MosaicCommand(BaseImage, mosaicRect, blockSize), selectedItem: null);
-    }
-
     private void ExecuteCommand(IAnnotationCommand command, AnnotationItem? selectedItem)
     {
         _undoStack.Execute(command);
         _selectedItem = selectedItem;
         _moveSourceItem = null;
         _previewItem = null;
-        _previewMosaicRect = null;
-        if (command is MosaicCommand)
-        {
-            RefreshBackground();
-        }
-
         RaiseContentChanged();
         InvalidateAnnotations();
     }
@@ -766,7 +730,6 @@ public sealed class AnnotationCanvas : Canvas
     private void ClearTransientState()
     {
         _previewItem = null;
-        _previewMosaicRect = null;
         _workingPoints = null;
         _isDrawing = false;
         _isMovingSelection = false;
@@ -853,21 +816,6 @@ public sealed class AnnotationCanvas : Canvas
         return (candidate - points[^1]).Length >= 0.8;
     }
 
-    private Int32Rect ToPixelRect(Rect rect)
-    {
-        var normalized = Rect.Intersect(rect, new Rect(0, 0, BaseImage.PixelWidth, BaseImage.PixelHeight));
-        if (normalized.IsEmpty)
-        {
-            return Int32Rect.Empty;
-        }
-
-        var x = (int)Math.Floor(normalized.X);
-        var y = (int)Math.Floor(normalized.Y);
-        var width = (int)Math.Ceiling(normalized.Width);
-        var height = (int)Math.Ceiling(normalized.Height);
-        return new Int32Rect(x, y, Math.Max(0, width), Math.Max(0, height));
-    }
-
     private Point ClampPoint(Point point) =>
         new(
             Math.Clamp(point.X, 0, BaseImage.PixelWidth),
@@ -875,41 +823,20 @@ public sealed class AnnotationCanvas : Canvas
 
     private void InvalidateAnnotations() => _annotationLayer.InvalidateVisual();
 
-    private void RefreshBackground()
-    {
-        // Image often keeps a cached frame of WriteableBitmap; reassign Source to force redraw.
-        var source = BaseImage;
-        _backgroundImage.Source = null;
-        _backgroundImage.Source = source;
-    }
-
     private static WriteableBitmap CreateMutableBitmap(BitmapSource image)
     {
-        // Always copy into a fresh Bgra32 buffer. Capture freezes sources, and Image
-        // must bind to a bitmap we can WritePixels into for mosaic.
         var converted = image.Format == PixelFormats.Bgra32
             ? image
             : new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
 
         var width = converted.PixelWidth;
         var height = converted.PixelHeight;
-        var dpiX = converted.DpiX > 0 ? converted.DpiX : 96;
-        var dpiY = converted.DpiY > 0 ? converted.DpiY : 96;
-        var writable = new WriteableBitmap(width, height, dpiX, dpiY, PixelFormats.Bgra32, null);
+        var writable = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
         var stride = width * 4;
         var pixels = new byte[checked(height * stride)];
         converted.CopyPixels(pixels, stride, 0);
         writable.WritePixels(new Int32Rect(0, 0, width, height), pixels, stride, 0);
         return writable;
-    }
-
-    private void ApplyDpiScaling() => ApplyDpiScaling(VisualTreeHelper.GetDpi(this));
-
-    private void ApplyDpiScaling(DpiScale dpi)
-    {
-        var scaleX = dpi.DpiScaleX > 0 ? 1.0 / dpi.DpiScaleX : 1.0;
-        var scaleY = dpi.DpiScaleY > 0 ? 1.0 / dpi.DpiScaleY : 1.0;
-        LayoutTransform = new ScaleTransform(scaleX, scaleY);
     }
 
     private void RaiseStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);

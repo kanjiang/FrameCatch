@@ -12,7 +12,6 @@ public enum ToolKind
     Arrow,
     Pen,
     Highlighter,
-    Mosaic,
     Text
 }
 
